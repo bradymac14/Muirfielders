@@ -85,6 +85,17 @@
 .st-nm.fn{font-weight:700}
 .st-sc{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
 .pool-loading{text-align:center;padding:40px 20px;color:#9A9A9A;font-size:13px;font-style:italic}
+.cb-selrow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.cb-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 9px 5px 7px;background:#FFFCF5;border:1.5px solid var(--g,#888);border-radius:999px;font-size:12.5px;font-weight:600;color:#1F1F1F}
+.cb-chip .cb-x{color:#B83A1F;font-weight:700;font-size:15px;line-height:1;margin-left:1px}
+.cb-cands{display:flex;flex-direction:column;margin-bottom:10px;border:1px solid rgba(27,58,46,.12);border-radius:8px;overflow:hidden;background:#FFFCF5}
+.cb-cand{display:flex;align-items:center;gap:8px;padding:9px 10px;text-align:left;font-size:13px;font-weight:500;border-bottom:1px solid rgba(27,58,46,.06);width:100%}
+.cb-cand:last-child{border-bottom:none}
+.cb-cand:active{background:rgba(201,166,100,.18)}
+.cb-count{font-size:12px;font-weight:600;color:#1B3A2E;padding:8px 4px 10px}
+.cb-count strong{font-family:'Fraunces',Georgia,serif;font-size:16px;font-style:italic;color:var(--tc)}
+.cb-warn{font-size:11.5px;color:#8B3A3A;background:rgba(231,113,92,.12);border:1px solid rgba(231,113,92,.3);border-radius:6px;padding:7px 10px;margin-bottom:8px}
+.cb-none{font-size:12px;color:#9A9A9A;font-style:italic;padding:12px 4px}
 </style>
 </head>
 <body>
@@ -198,7 +209,7 @@ const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'
 // ── state ─────────────────────────────────────────────────────────────────────
 const S={
   team:(()=>{try{return localStorage.getItem('bz-team')||'brady'}catch{return'brady'}})(),
-  view:'board',players:FALLBACK,status:'',updated:'',refreshing:false,error:null,group:null,stSearch:'',poolData:null
+  view:'board',players:FALLBACK,status:'',updated:'',refreshing:false,error:null,group:null,stSearch:'',poolData:null,combo:[],comboSearch:''
 };
 try{const c=localStorage.getItem('bz-cache');if(c){const d=JSON.parse(c);S.players=d.players;S.updated=d.updated||'';S.status=d.status||''}}catch{}
 
@@ -249,6 +260,7 @@ const icoTrophy=`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" str
 const icoScissors=`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B3A3A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>`;
 const icoList=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1"/><circle cx="3" cy="12" r="1"/><circle cx="3" cy="18" r="1"/></svg>`;
 const icoLayers=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`;
+const icoFilter=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`;
 function icoStar(c){return`<svg width="11" height="11" viewBox="0 0 24 24" fill="${c}" stroke="${c}" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`}
 function gbadge(g,lg){if(!g)return'';return`<span class="gbadge${lg?' lg':''}" style="background:${GC[g]}">G${g}</span>`}
 function chips(name,selK){const os=owners(name).filter(k=>k!==selK);if(!os.length)return'';return`<span class="chips">${os.map(k=>`<span class="chip" style="background:${TEAMS[k].color}">${TEAMS[k].init}</span>`).join('')}</span>`}
@@ -332,27 +344,29 @@ function fmt$(v){
 
 const FM={"BRADY MACDOWELL":"#C9A664","BEN JONES":"#3A6094","RICHARD COOMBS":"#9B4A4A"};
 
-function poolHTML(){
+// Score every pool team by summed projected earnings; returns sorted+ranked list.
+function scoreTeams(){
   // Build tie map: pos→count of alive players at that position
   const tieMap={};
   S.players.forEach(p=>{if(p.pos&&p.pos!=='CUT'&&p.pos!=='WD')tieMap[p.pos]=(tieMap[p.pos]||0)+1});
-
   // Build pay map by player canonical name
   const pm={};
   S.players.forEach(p=>{pm[can(p.name)]=projPay(p.pos,tieMap)});
-
   // Score each team: sum projected earnings across 16 picks
   const scored=PT.map(([name,picks])=>({
-    name,
+    name,picks,
     earn:picks.reduce((t,i)=>t+(pm[can(PL[i])]||0),0),
     fc:FM[name]||null
   }));
   scored.sort((a,b)=>b.earn-a.earn); // higher = better
-
-  // Assign ranks
+  // Assign ranks (ties share a rank)
   let rank=1;
   scored.forEach((t,i)=>{if(i>0&&t.earn!==scored[i-1].earn)rank=i+1;t.rank=rank;});
+  return scored;
+}
 
+function poolHTML(){
+  const scored=scoreTeams();
   const q=S.stSearch.toLowerCase();
   const list=q?scored.filter(t=>t.name.toLowerCase().includes(q)):scored;
 
@@ -362,6 +376,45 @@ function poolHTML(){
   return h;
 }
 
+
+// ── COMBO FINDER (which teams share a set of players) ────────────────────────
+function combosHTML(){
+  const sel=S.combo;
+  let h=`<div class="snote">Pick players to find every team that has <strong>all</strong> of them.</div>`;
+
+  // selected players as removable chips
+  if(sel.length){
+    h+=`<div class="cb-selrow">`+sel.map(i=>{
+      const g=getG(PL[i]);
+      return`<button class="cb-chip" data-cbrm="${i}" style="--g:${GC[g]||'#888'}">${gbadge(g)}<span>${esc(PL[i])}</span><span class="cb-x">×</span></button>`;
+    }).join('')+`</div>`;
+  }
+
+  // search + candidate list
+  h+=`<input class="st-search" id="cb-search" placeholder="Add a player…" value="${esc(S.comboSearch)}"/>`;
+  const q=S.comboSearch.toLowerCase().trim();
+  if(q){
+    const cands=PL.map((n,i)=>[n,i]).filter(([n,i])=>!sel.includes(i)&&can(n).includes(can(q))).slice(0,8);
+    if(cands.length){
+      h+=`<div class="cb-cands">`+cands.map(([n,i])=>{const g=getG(n);return`<button class="cb-cand" data-cbadd="${i}">${gbadge(g)}<span>${esc(n)}</span></button>`}).join('')+`</div>`;
+    }else{
+      h+=`<div class="cb-none">No player matches “${esc(S.comboSearch)}”.</div>`;
+    }
+  }
+
+  if(!sel.length)return h+`<div class="cb-none">Add one or more players above to see which teams have them.</div>`;
+
+  // same-group conflict (each team has exactly one pick per group)
+  const groups=sel.map(i=>getG(PL[i]));
+  const dupG=groups.find((g,idx)=>g&&groups.indexOf(g)!==idx);
+
+  const scored=scoreTeams();
+  const matches=scored.filter(t=>sel.every(i=>t.picks.includes(i)));
+  h+=`<div class="cb-count"><strong>${matches.length}</strong> of ${PT.length} teams have ${sel.length===1?'this player':'all '+sel.length+' players'}${matches.length?' · ranked by projected earnings':''}</div>`;
+  if(dupG)h+=`<div class="cb-warn">⚠ Two of your picks are from Group ${dupG}. Each team has only one player per group, so no team can have both.</div>`;
+  h+=matches.map(t=>`<div class="strow${t.fc?' st-f':''}"${t.fc?` style="--hl:${t.fc}"`:''}><div class="st-rnk">${t.rank}</div><div class="st-nm${t.fc?' fn':''}">${esc(t.name)}</div><div class="st-sc">${fmt$(t.earn)}</div></div>`).join('');
+  return h;
+}
 
 function summaryHTML(){
   const t=TEAMS[S.team],byC={};S.players.forEach(p=>{byC[can(p.name)]=p});
@@ -397,12 +450,13 @@ function render(){
 <div class="tsel">${Object.entries(TEAMS).map(([k,tm])=>`<button class="tbtn${S.team===k?' sel':''}" data-team="${k}" style="--tc:${tm.color}"><div class="tbtn-name">${esc(tm.short)}</div><div class="tbtn-lbl">${tm.init}</div></button>`).join('')}</div>
 ${summaryHTML()}
 <nav class="tabs">
-  <button class="tab${S.view==='board'?' active':''}" data-view="board">${icoList} Leaderboard</button>
+  <button class="tab${S.view==='board'?' active':''}" data-view="board">${icoList} Board</button>
   <button class="tab${S.view==='team'?' active':''}" data-view="team">${icoStar(S.view==='team'?'#C9A664':'currentColor')} Team</button>
   <button class="tab${S.view==='groups'?' active':''}" data-view="groups">${icoLayers} Groups</button>
   <button class="tab${S.view==='pool'?' active':''}" data-view="pool">${icoPool} Pool</button>
+  <button class="tab${S.view==='combos'?' active':''}" data-view="combos">${icoFilter} Combos</button>
 </nav>
-<main class="main">${S.view==='board'?boardHTML():S.view==='team'?teamHTML():S.view==='groups'?groupsHTML():poolHTML()}</main>
+<main class="main">${S.view==='board'?boardHTML():S.view==='team'?teamHTML():S.view==='groups'?groupsHTML():S.view==='pool'?poolHTML():combosHTML()}</main>
 <footer class="footer">ESPN data · auto-refreshes every 60s</footer>
 </div>`;
 
@@ -413,6 +467,11 @@ ${summaryHTML()}
   const back=document.querySelector('[data-back]');if(back)back.onclick=()=>{S.group=null;render()};
   const ss=document.getElementById('st-search');
   if(ss){ss.oninput=e=>{S.stSearch=e.target.value;render()};if(S.view==='pool')ss.focus();}
+
+  const cs=document.getElementById('cb-search');
+  if(cs){cs.oninput=e=>{S.comboSearch=e.target.value;render()};if(S.view==='combos')cs.focus();}
+  document.querySelectorAll('[data-cbadd]').forEach(b=>b.onclick=()=>{const i=+b.dataset.cbadd;if(!S.combo.includes(i))S.combo.push(i);S.comboSearch='';render()});
+  document.querySelectorAll('[data-cbrm]').forEach(b=>b.onclick=()=>{S.combo=S.combo.filter(x=>x!==+b.dataset.cbrm);render()});
 
 }
 
