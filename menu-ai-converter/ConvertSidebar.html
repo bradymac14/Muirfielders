@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --tb-teal:#2A7E81; --tb-mint:#F0F7F7; }
+  body { font-family:'Roboto',sans-serif; margin:0; padding:14px; color:#202124; background:#f8f9fa; }
+  h3 { margin:0 0 10px; font-size:16px; }
+  .steps { background:var(--tb-mint); border-left:4px solid var(--tb-teal); padding:8px 10px; border-radius:4px; font-size:12px; line-height:1.4; margin-bottom:12px; }
+  #drop { border:2px dashed #b5c9c9; border-radius:8px; padding:22px 10px; text-align:center; font-size:13px; color:#5f6368; background:#fff; cursor:pointer; }
+  #drop.hover { border-color:var(--tb-teal); background:var(--tb-mint); }
+  #fileName { font-size:12px; color:var(--tb-teal); font-weight:500; margin:8px 0 0; word-break:break-all; }
+  .btn { background:var(--tb-teal); color:#fff; padding:11px; border:none; border-radius:8px; font-weight:700; width:100%; cursor:pointer; font-size:13px; margin-top:10px; }
+  .btn:disabled { background:#9bbcbd; cursor:default; }
+  .btn.secondary { background:#fff; color:var(--tb-teal); border:1px solid var(--tb-teal); }
+  textarea { width:100%; box-sizing:border-box; height:150px; margin-top:10px; padding:8px; border:1px solid #dadce0; border-radius:6px; font-family:monospace; font-size:11px; }
+  .row { display:flex; align-items:center; gap:6px; font-size:12px; margin-top:8px; color:#5f6368; }
+  #status { font-size:12px; margin-top:10px; min-height:16px; }
+  .err { color:#c5221f; }
+  .ok { color:var(--tb-teal); }
+  .note { font-size:11px; color:#a06a00; background:#fff8e1; border-radius:4px; padding:6px 8px; margin-top:8px; }
+  .report { background:#fff; border:1px solid #dadce0; border-radius:6px; padding:10px; margin-top:10px; font-size:13px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+  <h3>Convert Menu (AI)</h3>
+  <div class="steps">1. Upload a menu (PDF or image).<br>2. Click <b>Convert</b>.<br>3. Review the JSON, then <b>Build Menu</b>.</div>
+
+  <div id="drop">Drag a menu file here, or click to choose<input type="file" id="file" accept=".pdf,image/*" class="hidden"></div>
+  <p id="fileName"></p>
+
+  <div class="row"><input type="checkbox" id="autoBuild"><label for="autoBuild">Build automatically after converting</label></div>
+
+  <button id="convertBtn" class="btn" disabled>Convert</button>
+
+  <div id="noteBox" class="note hidden"></div>
+  <textarea id="json" class="hidden" placeholder="Converted JSON will appear here for review..."></textarea>
+  <button id="buildBtn" class="btn secondary hidden">Build Menu</button>
+
+  <div id="status"></div>
+  <div id="report" class="report hidden"></div>
+
+<script>
+  var fileData = null, fileMime = null, fileLabel = null;
+  var $ = function(id){ return document.getElementById(id); };
+
+  var drop = $('drop'), fileInput = $('file');
+  drop.onclick = function(){ fileInput.click(); };
+  drop.ondragover = function(e){ e.preventDefault(); drop.classList.add('hover'); };
+  drop.ondragleave = function(){ drop.classList.remove('hover'); };
+  drop.ondrop = function(e){ e.preventDefault(); drop.classList.remove('hover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+  fileInput.onchange = function(){ if (fileInput.files[0]) handleFile(fileInput.files[0]); };
+
+  function handleFile(f){
+    fileLabel = f.name;
+    fileMime = f.type || (f.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : '');
+    $('fileName').textContent = f.name;
+    var reader = new FileReader();
+    reader.onload = function(){ fileData = reader.result.split(',')[1]; $('convertBtn').disabled = false; };
+    reader.readAsDataURL(f);
+  }
+
+  $('convertBtn').onclick = function(){
+    if (!fileData) return;
+    setStatus('Converting menu with Claude… (large menus can take up to a minute)');
+    $('convertBtn').disabled = true; $('convertBtn').textContent = 'Converting…';
+    google.script.run
+      .withSuccessHandler(onConverted)
+      .withFailureHandler(onError)
+      .convertMenuFile(fileData, fileMime, fileLabel);
+  };
+
+  function onConverted(res){
+    $('convertBtn').textContent = 'Convert'; $('convertBtn').disabled = false;
+    $('json').classList.remove('hidden'); $('buildBtn').classList.remove('hidden');
+    $('json').value = res.json;
+    if (res.stub){ $('noteBox').classList.remove('hidden'); $('noteBox').textContent = res.note; }
+    else { $('noteBox').classList.add('hidden'); }
+    setStatus('Converted. Review the JSON, then Build Menu.', 'ok');
+    if ($('autoBuild').checked) build();
+  }
+
+  $('buildBtn').onclick = build;
+  function build(){
+    var json = $('json').value.trim();
+    if (!json) return;
+    setStatus('Building menu into the sheet…');
+    $('buildBtn').disabled = true; $('buildBtn').textContent = 'Building…';
+    google.script.run
+      .withSuccessHandler(onBuilt)
+      .withFailureHandler(onError)
+      .processMenuJSON(json);   // <-- reuses your existing Code.gs function
+  }
+
+  function onBuilt(s){
+    $('buildBtn').textContent = 'Build Menu'; $('buildBtn').disabled = false;
+    setStatus('Done.', 'ok');
+    var r = $('report'); r.classList.remove('hidden');
+    r.innerHTML = '<b>Build complete</b><br>Items: <b>'+s.items+'</b><br>Groups: <b>'+s.groups+'</b><br>Pages: <b>'+s.pages+'</b>';
+  }
+
+  function onError(err){
+    $('convertBtn').textContent = 'Convert'; $('convertBtn').disabled = false;
+    $('buildBtn').textContent = 'Build Menu'; $('buildBtn').disabled = false;
+    setStatus((err && err.message) ? err.message : String(err), 'err');
+  }
+
+  function setStatus(msg, cls){ var s = $('status'); s.textContent = msg; s.className = cls || ''; }
+</script>
+</body>
+</html>
